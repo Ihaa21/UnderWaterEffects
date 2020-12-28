@@ -12,8 +12,8 @@ set AssimpLibDir=%LibsDir%\assimp-5.0.1\lib\RelWithDebInfo
 set CommonCompilerFlags=-Od -MTd -nologo -fp:fast -fp:except- -EHsc -Gm- -GR- -EHa- -Zo -Oi -WX -W4 -wd4127 -wd4201 -wd4100 -wd4189 -wd4505 -Z7 -FC
 set CommonCompilerFlags=-I %VulkanIncludeDir% %CommonCompilerFlags%
 set CommonCompilerFlags=-I %LibsDir% -I %AssimpIncludeDir% %CommonCompilerFlags%
-REM Check the DLLs here
-set CommonLinkerFlags=-incremental:no -opt:ref user32.lib gdi32.lib Winmm.lib opengl32.lib DbgHelp.lib d3d12.lib dxgi.lib d3dcompiler.lib %AssimpLibDir%\assimp-vc142-mt.lib
+REM Check the DLLs here  %AssimpLibDir%\assimp-vc142-mt.lib
+set CommonLinkerFlags=-incremental:no -opt:ref user32.lib gdi32.lib Winmm.lib opengl32.lib DbgHelp.lib d3d12.lib dxgi.lib d3dcompiler.lib
 
 IF NOT EXIST %OutputDir% mkdir %OutputDir%
 
@@ -29,12 +29,6 @@ call glslangValidator -DGBUFFER_FRAG=1 -S frag -e main -g -V -o %DataDir%\shader
 call glslangValidator -DTILED_DEFERRED_LIGHTING_VERT=1 -S vert -e main -g -V -o %DataDir%\shader_tiled_deferred_lighting_vert.spv %CodeDir%\tiled_deferred_shaders.cpp
 call glslangValidator -DTILED_DEFERRED_LIGHTING_FRAG=1 -S frag -e main -g -V -o %DataDir%\shader_tiled_deferred_lighting_frag.spv %CodeDir%\tiled_deferred_shaders.cpp
 
-call glslangValidator -DGBUFFER_SNOW_VERT=1 -S vert -e main -g -V -o %DataDir%\shader_tiled_deferred_gbuffer_snow_vert.spv %CodeDir%\tiled_deferred_shaders.cpp
-call glslangValidator -DGBUFFER_SNOW_FRAG=1 -S frag -e main -g -V -o %DataDir%\shader_tiled_deferred_gbuffer_snow_frag.spv %CodeDir%\tiled_deferred_shaders.cpp
-
-call glslangValidator -DWATER_VERTEX=1 -S vert -e main -g -V -o %DataDir%\shader_water_vert.spv %CodeDir%\tiled_deferred_shaders.cpp
-call glslangValidator -DWATER_FRAGMENT=1 -S frag -e main -g -V -o %DataDir%\shader_water_frag.spv %CodeDir%\tiled_deferred_shaders.cpp
-
 call glslangValidator -DFRAGMENT_SHADER=1 -S frag -e main -g -V -o %DataDir%\shader_copy_to_swap_frag.spv %CodeDir%\shader_copy_to_swap.cpp
 
 REM USING HLSL IN VK USING DXC
@@ -43,8 +37,8 @@ REM %DxcDir%\dxc.exe -spirv -T cs_6_0 -E main -fspv-target-env=vulkan1.1 -Fo ..\
 
 REM 64-bit build
 echo WAITING FOR PDB > lock.tmp
-cl %CommonCompilerFlags% %CodeDir%\toon_shading_demo.cpp -Fmtoon_shading_demo.map -LD /link %CommonLinkerFlags% -incremental:no -opt:ref -PDB:toon_shading_demo_%random%.pdb -EXPORT:Init -EXPORT:Destroy -EXPORT:SwapChainChange -EXPORT:CodeReload -EXPORT:MainLoop
+cl %CommonCompilerFlags% %CodeDir%\under_water_demo.cpp -Fmunder_water_demo.map -LD /link %CommonLinkerFlags% -incremental:no -opt:ref -PDB:under_water_demo_%random%.pdb -EXPORT:Init -EXPORT:Destroy -EXPORT:SwapChainChange -EXPORT:CodeReload -EXPORT:MainLoop
 del lock.tmp
-call cl %CommonCompilerFlags% -DDLL_NAME=toon_shading_demo -Fetoon_shading_demo.exe %LibsDir%\framework_vulkan\win32_main.cpp -Fmtoon_shading_demo.map /link %CommonLinkerFlags%
+call cl %CommonCompilerFlags% -DDLL_NAME=under_water_demo -Feunder_water_demo.exe %LibsDir%\framework_vulkan\win32_main.cpp -Fmunder_water_demo.map /link %CommonLinkerFlags%
 
 popd

@@ -187,22 +187,21 @@ inline void TiledDeferredCreate(renderer_create_info CreateInfo, VkDescriptorSet
         Result->GridFrustumPipeline = VkPipelineComputeCreate(RenderState->Device, &RenderState->PipelineManager, &DemoState->TempArena,
                                                               "shader_tiled_deferred_grid_frustum.spv", "main", Layouts, ArrayCount(Layouts));
     }
-            
-    // NOTE: Water descriptor
+
+    // NOTE: Caustics data
     {
-        vk_descriptor_layout_builder Builder = VkDescriptorLayoutBegin(&Result->WaterDescLayout);
-        VkDescriptorLayoutAdd(&Builder, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-        VkDescriptorLayoutAdd(&Builder, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-        VkDescriptorLayoutAdd(&Builder, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+        vk_descriptor_layout_builder Builder = VkDescriptorLayoutBegin(&Result->CausticsDescLayout);
+        VkDescriptorLayoutAdd(&Builder, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT);
+        VkDescriptorLayoutAdd(&Builder, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT);
         VkDescriptorLayoutEnd(RenderState->Device, &Builder);
 
-        Result->WaterDescriptor = VkDescriptorSetAllocate(RenderState->Device, RenderState->DescriptorPool, Result->WaterDescLayout);
-        Result->WaterInputsBuffer = VkBufferCreate(RenderState->Device, &RenderState->GpuArena,
-                                                   VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                                   sizeof(gpu_water_inputs));
-        VkDescriptorBufferWrite(&RenderState->DescriptorManager, Result->WaterDescriptor, 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, Result->WaterInputsBuffer);
-        Result->NoiseSampler = VkSamplerMipMapCreate(RenderState->Device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, 16.0f,
-                                                     VK_SAMPLER_MIPMAP_MODE_LINEAR, 0, 0, 5);    
+        Result->CausticsDescriptor = VkDescriptorSetAllocate(RenderState->Device, RenderState->DescriptorPool, Result->CausticsDescLayout);
+        Result->CausticsInputBuffer = VkBufferCreate(RenderState->Device, &RenderState->GpuArena,
+                                                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                     sizeof(gpu_caustics_input_buffer));
+        VkDescriptorBufferWrite(&RenderState->DescriptorManager, Result->CausticsDescriptor, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, Result->CausticsInputBuffer);
+
+        Result->CausticsSampler = VkSamplerCreate(RenderState->Device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT, 16.0f);
     }
 
     TiledDeferredSwapChainChange(Result, CreateInfo.Width, CreateInfo.Height, CreateInfo.ColorFormat, CreateInfo.Scene, OutputRtSet);
@@ -284,42 +283,6 @@ inline void TiledDeferredCreate(renderer_create_info CreateInfo, VkDescriptorSet
                                                                Result->GBufferPass.RenderPass, 0, DescriptorLayouts, ArrayCount(DescriptorLayouts));
 
             }
-
-            {
-                vk_pipeline_builder Builder = VkPipelineBuilderBegin(&DemoState->TempArena);
-
-                // NOTE: Shaders
-                VkPipelineShaderAdd(&Builder, "shader_tiled_deferred_gbuffer_snow_vert.spv", "main", VK_SHADER_STAGE_VERTEX_BIT);
-                VkPipelineShaderAdd(&Builder, "shader_tiled_deferred_gbuffer_snow_frag.spv", "main", VK_SHADER_STAGE_FRAGMENT_BIT);
-                
-                // NOTE: Specify input vertex data format
-                VkPipelineVertexBindingBegin(&Builder);
-                VkPipelineVertexAttributeAdd(&Builder, VK_FORMAT_R32G32B32_SFLOAT, sizeof(v3));
-                VkPipelineVertexAttributeAdd(&Builder, VK_FORMAT_R32G32B32_SFLOAT, sizeof(v3));
-                VkPipelineVertexAttributeAdd(&Builder, VK_FORMAT_R32G32_SFLOAT, sizeof(v2));
-                VkPipelineVertexBindingEnd(&Builder);
-
-                VkPipelineInputAssemblyAdd(&Builder, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE);
-                VkPipelineDepthStateAdd(&Builder, VK_TRUE, VK_TRUE, VK_COMPARE_OP_GREATER);
-
-                VkPipelineColorAttachmentAdd(&Builder, VK_FALSE, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
-                                             VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
-                VkPipelineColorAttachmentAdd(&Builder, VK_FALSE, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
-                                             VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
-                VkPipelineColorAttachmentAdd(&Builder, VK_FALSE, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
-                                             VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
-
-                VkDescriptorSetLayout DescriptorLayouts[] =
-                    {
-                        Result->TiledDeferredDescLayout,
-                        CreateInfo.SceneDescLayout,
-                        CreateInfo.MaterialDescLayout,
-                    };
-            
-                Result->GBufferSnowPipeline = VkPipelineBuilderEnd(&Builder, RenderState->Device, &RenderState->PipelineManager,
-                                                               Result->GBufferPass.RenderPass, 0, DescriptorLayouts, ArrayCount(DescriptorLayouts));
-
-            }
         }
         
         // NOTE: Light Cull
@@ -358,14 +321,6 @@ inline void TiledDeferredCreate(renderer_create_info CreateInfo, VkDescriptorSet
                 VkRenderPassColorRefAdd(&RpBuilder, OutColorId, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 VkRenderPassSubPassEnd(&RpBuilder);
 
-                VkRenderPassDependency(&RpBuilder, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
-                                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_DEPENDENCY_BY_REGION_BIT);
-
-                VkRenderPassSubPassBegin(&RpBuilder, VK_PIPELINE_BIND_POINT_GRAPHICS);
-                VkRenderPassColorRefAdd(&RpBuilder, OutColorId, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                VkRenderPassDepthRefAdd(&RpBuilder, DepthId, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
-                VkRenderPassSubPassEnd(&RpBuilder);
-
                 Result->LightingPass = RenderTargetBuilderEnd(&Builder, VkRenderPassBuilderEnd(&RpBuilder, RenderState->Device));
             }
 
@@ -389,45 +344,12 @@ inline void TiledDeferredCreate(renderer_create_info CreateInfo, VkDescriptorSet
                     {
                         Result->TiledDeferredDescLayout,
                         CreateInfo.SceneDescLayout,
+                        CreateInfo.MaterialDescLayout,
+                        Result->CausticsDescLayout,
                     };
             
                 Result->LightingPipeline = VkPipelineBuilderEnd(&Builder, RenderState->Device, &RenderState->PipelineManager,
                                                                 Result->LightingPass.RenderPass, 0, DescriptorLayouts, ArrayCount(DescriptorLayouts));
-            }
-            
-            // NOTE: Water PSO
-            {
-                vk_pipeline_builder Builder = VkPipelineBuilderBegin(&DemoState->TempArena);
-
-                // NOTE: Shaders
-                VkPipelineShaderAdd(&Builder, "shader_water_vert.spv", "main", VK_SHADER_STAGE_VERTEX_BIT);
-                VkPipelineShaderAdd(&Builder, "shader_water_frag.spv", "main", VK_SHADER_STAGE_FRAGMENT_BIT);
-
-                // NOTE: Specify input vertex data format
-                VkPipelineVertexBindingBegin(&Builder);
-                VkPipelineVertexAttributeAdd(&Builder, VK_FORMAT_R32G32B32_SFLOAT, sizeof(v3));
-                VkPipelineVertexAttributeAdd(&Builder, VK_FORMAT_R32G32B32_SFLOAT, sizeof(v3));
-                VkPipelineVertexAttributeAdd(&Builder, VK_FORMAT_R32G32_SFLOAT, sizeof(v2));
-                VkPipelineVertexBindingEnd(&Builder);
-
-                VkPipelineInputAssemblyAdd(&Builder, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE);
-                VkPipelineDepthStateAdd(&Builder, VK_TRUE, VK_FALSE, VK_COMPARE_OP_GREATER);
-                
-                // NOTE: Set the blending state
-                VkPipelineColorAttachmentAdd(&Builder, VK_TRUE, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                             VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
-
-                VkDescriptorSetLayout DescriptorLayouts[] =
-                    {
-                        Result->TiledDeferredDescLayout,
-                        CreateInfo.SceneDescLayout,
-                        CreateInfo.MaterialDescLayout,
-                        Result->WaterDescLayout,
-                    };
-            
-                Result->WaterPipeline = VkPipelineBuilderEnd(&Builder, RenderState->Device, &RenderState->PipelineManager,
-                                                             Result->LightingPass.RenderPass, 1, DescriptorLayouts,
-                                                             ArrayCount(DescriptorLayouts));
             }
         }
     }
@@ -436,6 +358,9 @@ inline void TiledDeferredCreate(renderer_create_info CreateInfo, VkDescriptorSet
 inline void TiledDeferredAddMeshes(tiled_deferred_state* State, render_mesh* QuadMesh)
 {
     State->QuadMesh = QuadMesh;
+    State->CausticsImage = TextureLoad("frames\\caust_001.png", VK_FORMAT_R8G8B8A8_UNORM, false, sizeof(u8), 4);
+    VkDescriptorImageWrite(&RenderState->DescriptorManager, State->CausticsDescriptor, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                           State->CausticsImage.View, State->CausticsSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 inline void TiledDeferredRender(vk_commands Commands, tiled_deferred_state* State, render_scene* Scene)
@@ -466,10 +391,6 @@ inline void TiledDeferredRender(vk_commands Commands, tiled_deferred_state* Stat
             render_mesh* CurrMesh = Scene->RenderMeshes + CurrInstance->MeshId;
 
             vk_pipeline* Pipeline = State->GBufferPipeline;
-            if (CurrInstance->IsSnow)
-            {
-                Pipeline = State->GBufferSnowPipeline;
-            }
             
             vkCmdBindPipeline(Commands.Buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, Pipeline->Handle);
             VkDescriptorSet DescriptorSets[] =
@@ -519,41 +440,14 @@ inline void TiledDeferredRender(vk_commands Commands, tiled_deferred_state* Stat
                 };
             vkCmdBindDescriptorSets(Commands.Buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, State->LightingPipeline->Layout, 0,
                                     ArrayCount(DescriptorSets), DescriptorSets, 0, 0);
+            vkCmdBindDescriptorSets(Commands.Buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, State->LightingPipeline->Layout, 3,
+                                    1, &State->CausticsDescriptor, 0, 0);
         }
 
         VkDeviceSize Offset = 0;
         vkCmdBindVertexBuffers(Commands.Buffer, 0, 1, &State->QuadMesh->VertexBuffer, &Offset);
         vkCmdBindIndexBuffer(Commands.Buffer, State->QuadMesh->IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(Commands.Buffer, State->QuadMesh->NumIndices, 1, 0, 0, 0);
-    }
-    
-    RenderTargetNextSubPass(Commands);
-
-    // NOTE: Draw Water Meshes
-    {
-        vkCmdBindPipeline(Commands.Buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, State->WaterPipeline->Handle);
-        {
-            VkDescriptorSet DescriptorSets[] =
-                {
-                    State->TiledDeferredDescriptor,
-                    Scene->SceneDescriptor,
-                };
-            vkCmdBindDescriptorSets(Commands.Buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, State->WaterPipeline->Layout, 0,
-                                    ArrayCount(DescriptorSets), DescriptorSets, 0, 0);
-            vkCmdBindDescriptorSets(Commands.Buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, State->WaterPipeline->Layout, 3,
-                                    1, &State->WaterDescriptor, 0, 0);
-        }
-        
-        for (u32 InstanceId = 0; InstanceId < Scene->NumWaterInstances; ++InstanceId)
-        {
-            water_entry* CurrInstance = Scene->WaterInstances + InstanceId;
-            render_mesh* CurrMesh = Scene->RenderMeshes + CurrInstance->MeshId;
-            
-            VkDeviceSize Offset = 0;
-            vkCmdBindVertexBuffers(Commands.Buffer, 0, 1, &CurrMesh->VertexBuffer, &Offset);
-            vkCmdBindIndexBuffer(Commands.Buffer, CurrMesh->IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(Commands.Buffer, CurrMesh->NumIndices, 1, 0, 0, InstanceId);
-        }
     }
 
     RenderTargetPassEnd(Commands);

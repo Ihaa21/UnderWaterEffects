@@ -1,5 +1,5 @@
 
-#include "toon_shading_demo.h"
+#include "under_water_demo.h"
 #include "tiled_deferred.cpp"
 
 //
@@ -33,29 +33,18 @@ inline u32 SceneMeshAdd(render_scene* Scene, vk_image Color, vk_image Normal, pr
 }
 
 inline void SceneOpaqueInstanceAdd(render_scene* Scene, u32 MeshId, m4 WTransform, v4 Color, float SpecularPower, float RimBound,
-                                   float RimThreshold, b32 IsSnow = false)
+                                   float RimThreshold)
 {
     Assert(Scene->NumOpaqueInstances < Scene->MaxNumOpaqueInstances);
 
     instance_entry* Instance = Scene->OpaqueInstances + Scene->NumOpaqueInstances++;
     Instance->MeshId = MeshId;
-    Instance->IsSnow = IsSnow;
-    Instance->GpuData.WVTransform = CameraGetV(&Scene->Camera)*WTransform;
-    Instance->GpuData.WVPTransform = CameraGetP(&Scene->Camera)*Instance->GpuData.WVTransform;
+    Instance->GpuData.WTransform = WTransform;
+    Instance->GpuData.WVPTransform = CameraGetVP(&Scene->Camera)*Instance->GpuData.WTransform;
     Instance->GpuData.Color = Color;
     Instance->GpuData.SpecularPower = SpecularPower;
     Instance->GpuData.RimBound = RimBound;
     Instance->GpuData.RimThreshold = RimThreshold;
-}
-
-inline void SceneWaterInstanceAdd(render_scene* Scene, u32 MeshId, m4 WTransform)
-{
-    Assert(Scene->NumWaterInstances < Scene->MaxNumWaterInstances);
-
-    water_entry* Entry = Scene->WaterInstances + Scene->NumWaterInstances++;
-    Entry->MeshId = MeshId;
-    Entry->GpuData.WVTransform = CameraGetV(&Scene->Camera)*WTransform;
-    Entry->GpuData.WVPTransform = CameraGetP(&Scene->Camera)*Entry->GpuData.WVTransform;
 }
 
 inline void ScenePointLightAdd(render_scene* Scene, v3 Pos, v3 Color, f32 MaxDistance)
@@ -71,7 +60,7 @@ inline void ScenePointLightAdd(render_scene* Scene, v3 Pos, v3 Color, f32 MaxDis
 
 inline void SceneDirectionalLightSet(render_scene* Scene, v3 LightDir, v3 Color, v3 AmbientColor, v3 BoundsMin, v3 BoundsMax)
 {
-    Scene->DirectionalLight.Dir = (CameraGetV(&Scene->Camera) * V4(LightDir, 0)).xyz;
+    Scene->DirectionalLight.Dir = LightDir;
     Scene->DirectionalLight.Color = Color;
     Scene->DirectionalLight.AmbientColor = AmbientColor;
 }
@@ -207,16 +196,6 @@ DEMO_INIT(Init)
         Scene->DirectionalLightGpu = VkBufferCreate(RenderState->Device, &RenderState->GpuArena,
                                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                     sizeof(directional_light));
-
-        Scene->MaxNumWaterInstances = 1000;
-        Scene->WaterInstances = PushArray(&DemoState->Arena, water_entry, Scene->MaxNumWaterInstances);
-        Scene->WaterInstanceBuffer = VkBufferCreate(RenderState->Device, &RenderState->GpuArena,
-                                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                                    sizeof(water_entry)*Scene->MaxNumWaterInstances);
-
-        Scene->SnowGlobalBuffer = VkBufferCreate(RenderState->Device, &RenderState->GpuArena,
-                                                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                                 sizeof(gpu_snow_globals));
         
         // NOTE: Create general descriptor set layouts
         {
@@ -247,8 +226,6 @@ DEMO_INIT(Init)
         VkDescriptorBufferWrite(&RenderState->DescriptorManager, Scene->SceneDescriptor, 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Scene->PointLightBuffer);
         VkDescriptorBufferWrite(&RenderState->DescriptorManager, Scene->SceneDescriptor, 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Scene->PointLightTransforms);
         VkDescriptorBufferWrite(&RenderState->DescriptorManager, Scene->SceneDescriptor, 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Scene->DirectionalLightGpu);
-        VkDescriptorBufferWrite(&RenderState->DescriptorManager, Scene->SceneDescriptor, 5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Scene->WaterInstanceBuffer);
-        VkDescriptorBufferWrite(&RenderState->DescriptorManager, Scene->SceneDescriptor, 6, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, Scene->SnowGlobalBuffer);
     }
 
     // NOTE: Create render data
@@ -309,17 +286,6 @@ DEMO_INIT(Init)
         DemoState->Cube = SceneMeshAdd(Scene, WhiteTexture, WhiteTexture, AssetsPushCube());
         DemoState->Sphere = SceneMeshAdd(Scene, WhiteTexture, WhiteTexture, AssetsPushSphere(64, 64));
         TiledDeferredAddMeshes(&DemoState->TiledDeferredState, Scene->RenderMeshes + DemoState->Quad);
-
-        // NOTE: Push water data
-        {
-            DemoState->TiledDeferredState.PerlinNoise = TextureLoad("PerlinNoise.png", VK_FORMAT_R8G8B8A8_UNORM, false, sizeof(u8), 4);
-            VkDescriptorImageWrite(&RenderState->DescriptorManager, DemoState->TiledDeferredState.WaterDescriptor, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                   DemoState->TiledDeferredState.PerlinNoise.View, DemoState->TiledDeferredState.NoiseSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-            DemoState->TiledDeferredState.Distortion = TextureLoad("WaterDistortion.png", VK_FORMAT_R8G8B8A8_UNORM, false, sizeof(u8), 4);
-            VkDescriptorImageWrite(&RenderState->DescriptorManager, DemoState->TiledDeferredState.WaterDescriptor, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                   DemoState->TiledDeferredState.Distortion.View, DemoState->TiledDeferredState.NoiseSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        }
         
         VkDescriptorManagerFlush(RenderState->Device, &RenderState->DescriptorManager);
         VkTransferManagerFlush(&RenderState->TransferManager, RenderState->Device, RenderState->Commands.Buffer, &RenderState->BarrierManager);
@@ -377,7 +343,6 @@ DEMO_MAIN_LOOP(MainLoop)
     {
         render_scene* Scene = &DemoState->Scene;
         Scene->NumOpaqueInstances = 0;
-        Scene->NumWaterInstances = 0;
         Scene->NumPointLights = 0;
         CameraUpdate(&Scene->Camera, CurrInput, PrevInput);
         
@@ -427,37 +392,10 @@ DEMO_MAIN_LOOP(MainLoop)
                 SceneOpaqueInstanceAdd(Scene, DemoState->Sphere, M4Pos(V3(0.0f, 0.0f, 0.0f)) * M4Scale(V3(1.0f)), V4(0.3f, 0.3f, 0.9f, 1.0f),
                                        32, 0.716, 0.1);
 
-                // NOTE: Snow
-                SceneOpaqueInstanceAdd(Scene, DemoState->Sphere, M4Pos(V3(0.0f, 3.0f, 0.0f)) * M4Scale(V3(1.0f)), V4(0.3f, 0.3f, 0.9f, 1.0f),
-                                       32, 0.716, 0.1, true);
-                
-                SceneOpaqueInstanceAdd(Scene, DemoState->Cube, M4Pos(V3(-3, 0, 0)) * M4Scale(V3(1, 10, 10)), V4(0.7f, 0.3f, 0.3f, 1.0f),
-                                       64, 0.9, 0.1);
-                SceneOpaqueInstanceAdd(Scene, DemoState->Cube, M4Pos(V3(0, -3, 0)) * M4Scale(V3(10, 1, 10)), V4(0.2f, 0.4f, 0.2f, 1.0f),
-                                       64, 0.9, 0.1);
-
-                // NOTE: Water area
-                v4 RockColor = 0.75f*V4(150.0f / 256.0f, 75.0f / 256.0f, 0.0f, 1.0f);
-                SceneOpaqueInstanceAdd(Scene, DemoState->Cube,
-                                       M4Pos(V3(5.0f - 1.5f, 0.0f, 0.0f)) * M4Rotation(V3(0.0f, 0.0f, 0.5f)) * M4Scale(V3(1, 5, 5)),
-                                       RockColor, 64, 0.99, 0.01);
-                SceneOpaqueInstanceAdd(Scene, DemoState->Cube,
-                                       M4Pos(V3(5.0f + 1.5f, 0.0f, 0.0f)) * M4Rotation(V3(0.0f, 0.0f, -0.5f)) * M4Scale(V3(1, 5, 5)),
-                                       RockColor, 64, 0.99, 0.01);
-
-                SceneOpaqueInstanceAdd(Scene, DemoState->Cube,
-                                       M4Pos(V3(5.0f, 0.0f, -1.5f)) * M4Rotation(V3(-0.5f, 0.0f, 0.0f)) * M4Scale(V3(5, 5, 1)),
-                                       RockColor, 64, 0.99, 0.01);
-                SceneOpaqueInstanceAdd(Scene, DemoState->Cube,
-                                       M4Pos(V3(5.0f, 0.0f, +1.5f)) * M4Rotation(V3(0.5f, 0.0f, 0.0f)) * M4Scale(V3(5, 5, 1)),
-                                       RockColor, 64, 0.99, 0.01);
-
-                SceneOpaqueInstanceAdd(Scene, DemoState->Cube,
-                                       M4Pos(V3(5.0f, 2.0f, 0.0f)) * M4Rotation(V3(0.5f, 0.2f, 0.0f)) * M4Scale(V3(1, 1, 1)),
-                                       V4(0.4f, 0.5f, 0.0f, 1.0f), 64, 0.99, 0.01);
-
-                SceneWaterInstanceAdd(Scene, DemoState->Quad,
-                                      M4Pos(V3(5.0f, 2.0f, 0.0f)) * M4Rotation(V3(Pi32/2.0f, 0.0f, 0.0f)) * M4Scale(V3(5, 5, 1)));
+                SceneOpaqueInstanceAdd(Scene, DemoState->Cube, M4Pos(V3(0.0f, -3.0f, 0.0f)) * M4Scale(V3(10.0f, 1.0f, 10.0f)), V4(0.2f, 0.2f, 0.7f, 1.0f),
+                                       32, 0.99, 1);
+                SceneOpaqueInstanceAdd(Scene, DemoState->Cube, M4Pos(V3(-3.0f, 0.0f, 0.0f)) * M4Scale(V3(1.0f, 10.0f, 10.0f)), V4(0.2f, 0.2f, 0.7f, 1.0f),
+                                       32, 0.99, 1);
             }
         }        
 
@@ -472,30 +410,6 @@ DEMO_MAIN_LOOP(MainLoop)
             {
                 GpuData[InstanceId] = Scene->OpaqueInstances[InstanceId].GpuData;
             }
-        }
-
-        // NOTE: Push water instances
-        if (Scene->NumWaterInstances > 0)
-        {
-            gpu_water_entry* GpuData = VkTransferPushWriteArray(&RenderState->TransferManager, Scene->WaterInstanceBuffer, gpu_water_entry, Scene->NumWaterInstances,
-                                                                BarrierMask(VkAccessFlagBits(0), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT),
-                                                                BarrierMask(VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
-
-            for (u32 InstanceId = 0; InstanceId < Scene->NumWaterInstances; ++InstanceId)
-            {
-                GpuData[InstanceId] = Scene->WaterInstances[InstanceId].GpuData;
-            }
-        }
-
-        // NOTE: Push snow data
-        {
-            gpu_snow_globals* Data = VkTransferPushWriteStruct(&RenderState->TransferManager, Scene->SnowGlobalBuffer, gpu_snow_globals,
-                                                            BarrierMask(VkAccessFlagBits(0), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT),
-                                                            BarrierMask(VK_ACCESS_UNIFORM_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
-            *Data = {};
-
-            v3 Dir = Normalize(V3(0.2f, -1.0f, 0.0f));
-            Data->SnowFallDir = (CameraGetV(&Scene->Camera) * V4(Dir, 0.0f)).xyz;
         }
         
         // NOTE: Push Point Lights
@@ -537,18 +451,17 @@ DEMO_MAIN_LOOP(MainLoop)
             Data->NumPointLights = Scene->NumPointLights;
         }
 
-        // NOTE: Push water inputs
+        // NOTE: Push Caustics Globals
         {
-            gpu_water_inputs* Data = VkTransferPushWriteStruct(&RenderState->TransferManager, DemoState->TiledDeferredState.WaterInputsBuffer, gpu_water_inputs,
-                                                               BarrierMask(VkAccessFlagBits(0), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT),
-                                                               BarrierMask(VK_ACCESS_UNIFORM_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
-            *Data = {};
-
-            // TODO: Hacky
             local_global f32 T = 0.0f;
-            T += FrameTime;
             
+            gpu_caustics_input_buffer* Data = VkTransferPushWriteStruct(&RenderState->TransferManager, DemoState->TiledDeferredState.CausticsInputBuffer, gpu_caustics_input_buffer,
+                                                                        BarrierMask(VkAccessFlagBits(0), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT),
+                                                                        BarrierMask(VK_ACCESS_UNIFORM_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
+            *Data = {};
             Data->Time = T;
+
+            T += FrameTime;
         }
         
         VkTransferManagerFlush(&RenderState->TransferManager, RenderState->Device, RenderState->Commands.Buffer, &RenderState->BarrierManager);

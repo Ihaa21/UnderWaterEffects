@@ -24,6 +24,7 @@ vec3 ToonBlinnPhongLighting(vec3 CameraView,
         LightIntensity += DiffuseIntensity;
     }
 
+#if 0
     // NOTE: Specular Light
     {
         vec3 HalfwayDir = normalize(-LightDir + CameraView);
@@ -31,7 +32,8 @@ vec3 ToonBlinnPhongLighting(vec3 CameraView,
         SpecularIntensity = smoothstep(0.005, 0.01, SpecularIntensity);
         LightIntensity += SpecularIntensity;
     }
-
+#endif
+    
     // NOTE: Rim Light
     {
         float RimIntensity = (1 - dot(CameraView, SurfaceNormal)) * pow(NDotL, RimThreshold);

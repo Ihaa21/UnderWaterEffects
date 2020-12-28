@@ -123,12 +123,11 @@ layout(set = 0, binding = 11) uniform sampler2D GBufferDepthTexture;
 SCENE_DESCRIPTOR_LAYOUT(1)
 MATERIAL_DESCRIPTOR_LAYOUT(2)
 
-layout(set = 3, binding = 0) uniform sampler2D PerlinNoise;
-layout(set = 3, binding = 1) uniform sampler2D Distortion;
-layout(set = 3, binding = 2) uniform water_inputs
+layout(set = 3, binding = 0) uniform sampler2D Caustics;
+layout(set = 3, binding = 1) uniform caustic_inputs
 {
     float Time;
-} WaterInputs;
+} CausticsInputs;
 
 //
 // NOTE: Grid Frustum Shader
@@ -314,8 +313,8 @@ layout(location = 0) in vec3 InPos;
 layout(location = 1) in vec3 InNormal;
 layout(location = 2) in vec2 InUv;
 
-layout(location = 0) out vec3 OutViewPos;
-layout(location = 1) out vec3 OutViewNormal;
+layout(location = 0) out vec3 OutWorldPos;
+layout(location = 1) out vec3 OutWorldNormal;
 layout(location = 2) out vec2 OutUv;
 layout(location = 3) out flat uint OutInstanceId;
 
@@ -324,8 +323,8 @@ void main()
     instance_entry Entry = InstanceBuffer[gl_InstanceIndex];
     
     gl_Position = Entry.WVPTransform * vec4(InPos, 1);
-    OutViewPos = (Entry.WVTransform * vec4(InPos, 1)).xyz;
-    OutViewNormal = (Entry.WVTransform * vec4(InNormal, 0)).xyz;
+    OutWorldPos = (Entry.WTransform * vec4(InPos, 1)).xyz;
+    OutWorldNormal = (Entry.WTransform * vec4(InNormal, 0)).xyz;
     OutUv = InUv;
     OutInstanceId = gl_InstanceIndex;
 }
@@ -338,86 +337,20 @@ void main()
 
 #if GBUFFER_FRAG
 
-layout(location = 0) in vec3 InViewPos;
-layout(location = 1) in vec3 InViewNormal;
+layout(location = 0) in vec3 InWorldPos;
+layout(location = 1) in vec3 InWorldNormal;
 layout(location = 2) in vec2 InUv;
 layout(location = 3) in flat uint InInstanceId;
 
-layout(location = 0) out vec4 OutViewPos;
-layout(location = 1) out vec4 OutViewNormal;
+layout(location = 0) out vec4 OutWorldPos;
+layout(location = 1) out vec4 OutWorldNormal;
 layout(location = 2) out uvec2 OutMaterial;
 
 void main()
 {
-    OutViewPos = vec4(InViewPos, 0);
-    OutViewNormal = vec4(normalize(InViewNormal), 0);
+    OutWorldPos = vec4(InWorldPos, 0);
+    OutWorldNormal = vec4(normalize(InWorldNormal), 0);
     OutMaterial = uvec2(InInstanceId, 0);
-}
-
-#endif
-
-//
-// NOTE: GBuffer Snow Vertex
-//
-
-// NOTE: Snow inputs
-vec3 SnowColor = vec3(0.75, 0.75, 1);
-float SnowHeight = 0.05;
-float SnowAmount = 0.25;
-
-#if GBUFFER_SNOW_VERT
-
-layout(location = 0) in vec3 InPos;
-layout(location = 1) in vec3 InNormal;
-layout(location = 2) in vec2 InUv;
-
-layout(location = 0) out vec3 OutViewPos;
-layout(location = 1) out vec3 OutViewNormal;
-layout(location = 2) out vec2 OutUv;
-layout(location = 3) out flat uint OutInstanceId;
-
-void main()
-{
-    instance_entry Entry = InstanceBuffer[gl_InstanceIndex];
-
-    vec3 ViewNormal = (Entry.WVTransform * vec4(InNormal, 0)).xyz;
-    float SnowAngle = -dot(SnowBuffer.SnowFallDir, ViewNormal);
-
-    vec3 SnowPos = InPos;
-    if (SnowAngle > SnowAmount)
-    {
-        SnowPos += InNormal * SnowAngle * SnowHeight;
-    }
-    
-    gl_Position = Entry.WVPTransform * vec4(SnowPos, 1);
-    OutViewPos = (Entry.WVTransform * vec4(SnowPos, 1)).xyz;
-    OutViewNormal = ViewNormal;
-    OutUv = InUv;
-    OutInstanceId = gl_InstanceIndex;
-}
-
-#endif
-
-//
-// NOTE: GBuffer Snow Fragment
-//
-
-#if GBUFFER_SNOW_FRAG
-
-layout(location = 0) in vec3 InViewPos;
-layout(location = 1) in vec3 InViewNormal;
-layout(location = 2) in vec2 InUv;
-layout(location = 3) in flat uint InInstanceId;
-
-layout(location = 0) out vec4 OutViewPos;
-layout(location = 1) out vec4 OutViewNormal;
-layout(location = 2) out uvec2 OutMaterial;
-
-void main()
-{
-    OutViewPos = vec4(InViewPos, 0);
-    OutViewNormal = vec4(normalize(InViewNormal), 0);
-    OutMaterial = uvec2(InInstanceId, 1);
 }
 
 #endif
@@ -445,9 +378,22 @@ void main()
 
 layout(location = 0) out vec4 OutColor;
 
+vec3 CausticsSample(vec2 Uv, vec2 Scaling, vec2 Dir, vec2 Offset)
+{
+    // TODO: These are globals
+    float SplitRgbSize = 0.005;
+    
+    vec2 CausticsUv = Uv / Scaling + Offset * Dir;
+    vec3 CausticsColor = vec3(texture(Caustics, CausticsUv + vec2(+SplitRgbSize, +SplitRgbSize)).r,
+                              texture(Caustics, CausticsUv + vec2(+SplitRgbSize, -SplitRgbSize)).g,
+                              texture(Caustics, CausticsUv + vec2(-SplitRgbSize, -SplitRgbSize)).b);
+
+    return CausticsColor;
+}
+
 void main()
 {
-    vec3 CameraPos = vec3(0, 0, 0);
+    vec3 CameraPos = SceneBuffer.CameraPos;
     ivec2 PixelPos = ivec2(gl_FragCoord.xy);
 
     uvec2 MaterialId = texelFetch(GBufferMaterialTexture, PixelPos, 0).xy;
@@ -462,21 +408,6 @@ void main()
     vec3 SurfaceNormal = texelFetch(GBufferNormalTexture, PixelPos, 0).xyz;
     vec3 SurfaceColor = Entry.Color.rgb;
     vec3 View = normalize(CameraPos - SurfacePos);
-
-    if (MaterialId.y == 1)
-    {
-        // NOTE: We have snow on this object
-        float SnowAngle = -dot(SnowBuffer.SnowFallDir, SurfaceNormal);
-        if (SnowAngle > SnowAmount)
-        {
-            SurfaceColor = SnowColor;
-            Entry.SpecularPower = 32;
-            Entry.RimBound = 0.05;
-            Entry.RimThreshold = 0.01;
-            
-            // TODO: Modify lighting properties since we have snow
-        }
-    }
     
     vec3 Color = vec3(0);
 
@@ -500,95 +431,27 @@ void main()
         Color += DirectionalLight.AmbientLight * SurfaceColor;
     }
 
+    // NOTE: Water caustics
+    {
+        // NOTE: https://www.alanzucconi.com/2019/09/13/believable-caustics-reflections/
+        // TODO: These are global inputs
+        vec2 UvScaling1 = vec2(2);
+        vec2 UvDir1 = normalize(vec2(1, 0.5));
+        vec2 UvScaling2 = vec2(3);
+        vec2 UvDir2 = normalize(vec2(0.5, -0.5));
+        
+        // NOTE: Modulate caustics based on normal
+        float NDotL = clamp(dot(-DirectionalLight.Dir, SurfaceNormal), 0, 1);
+
+        vec2 UvOffset1 = 0.004*vec2(CausticsInputs.Time);
+        vec2 UvOffset2 = 0.002*vec2(CausticsInputs.Time) + vec2(0.1, 0.5);
+
+        vec3 CausticsColor1 = CausticsSample(SurfacePos.xz, UvScaling1, UvDir1, UvOffset1);
+        vec3 CausticsColor2 = CausticsSample(SurfacePos.xz, UvScaling2, UvDir2, UvOffset2);
+        Color += NDotL * min(CausticsColor1, CausticsColor2);
+    }
+    
     OutColor = vec4(Color, 1);
-}
-
-#endif
-
-//
-// NOTE: Water Shaders
-//
-
-#if WATER_VERTEX
-
-layout(location = 0) in vec3 InPos;
-layout(location = 1) in vec3 InNormal;
-layout(location = 2) in vec2 InUv;
-
-layout(location = 0) out vec3 OutViewPos;
-layout(location = 1) out vec3 OutViewNormal;
-layout(location = 2) out vec2 OutUv;
-layout(location = 3) out flat uint OutInstanceId;
-
-void main()
-{
-    water_entry Entry = WaterBuffer[gl_InstanceIndex];
-    
-    gl_Position = Entry.WVPTransform * vec4(InPos, 1);
-    OutViewPos = (Entry.WVTransform * vec4(InPos, 1)).xyz;
-    OutViewNormal = (Entry.WVTransform * vec4(InNormal, 0)).xyz;
-    OutUv = InUv;
-    OutInstanceId = gl_InstanceIndex;
-}
-
-#endif
-
-#if WATER_FRAGMENT
-
-layout(location = 0) in vec3 InViewPos;
-layout(location = 1) in vec3 InViewNormal;
-layout(location = 2) in vec2 InUv;
-layout(location = 3) in flat uint InInstanceId;
-
-layout(location = 0) out vec4 OutColor;
-
-float LinearizeDepth(float Depth, float NearZ, float FarZ)
-{
-    return NearZ * FarZ / (NearZ + Depth * (FarZ - NearZ));
-}
-
-void main()
-{
-    // NOTE: Shader inputs
-    vec4 ShallowColor = vec4(0.325, 0.807, 0.971, 0.725);
-    vec4 DeepColor = vec4(0.086, 0.407, 1, 0.9);
-    float MaxDepth = 1;
-    float WaterNoiseCutOff = 0.777;
-    float FoamMinDistance = 0.04;
-    float FoamMaxDistance = 0.4;
-    vec2 NoiseScrollAmount = vec2(0.003);
-    float SurfaceDistortAmount = 0.27;
-    float SurfaceAA = 0.005;
-
-    // TODO: Make these inputs
-    float NearZ = 0.01f;
-    float FarZ = 1000.0f;
-
-    ivec2 PixelCoords = ivec2(gl_FragCoord.xy);
-    vec4 WaterColor = vec4(0);
-    
-    // NOTE: Calculate base water color
-    float DepthValue = texelFetch(GBufferDepthTexture, PixelCoords, 0).x;
-    DepthValue = LinearizeDepth(DepthValue, NearZ, FarZ);
-    float DepthDifference = DepthValue - InViewPos.z;
-    WaterColor += mix(ShallowColor, DeepColor, clamp(DepthDifference / MaxDepth, 0, 1));
-
-    // NOTE: Shoreline effect, change the surface noise to be smaller when we are in shallow water
-    vec3 BackgroundNormal = texelFetch(GBufferNormalTexture, PixelCoords, 0).xyz;
-    float FoamDistance = mix(FoamMaxDistance, FoamMinDistance, clamp(dot(InViewNormal, BackgroundNormal), 0, 1));
-    float FoamDepthDifference = clamp(DepthDifference / FoamDistance, 0, 1);
-    float SurfaceNoiseCutOff = FoamDepthDifference * WaterNoiseCutOff;
-
-    // NOTE: Distorted water effect
-    vec2 Distortion = SurfaceDistortAmount * (2 * texture(Distortion, InUv).xy - 1);
-
-    // NOTE: Calculate waves
-    vec2 ModifiedUv = InUv + WaterInputs.Time * NoiseScrollAmount + Distortion; 
-    float NoiseSample = texture(PerlinNoise, ModifiedUv).x;
-    float SurfaceNoise = smoothstep(SurfaceNoiseCutOff - SurfaceAA, SurfaceNoiseCutOff + SurfaceAA, NoiseSample);
-    WaterColor += SurfaceNoise;
-    
-    OutColor = WaterColor;
 }
 
 #endif

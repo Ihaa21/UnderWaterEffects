@@ -3,6 +3,11 @@
 #define TILE_SIZE_IN_PIXELS 8
 #define MAX_LIGHTS_PER_TILE 1024
 
+struct gpu_caustics_input_buffer
+{
+    f32 Time;
+};
+
 struct tiled_deferred_globals
 {
     // TODO: Move to camera?
@@ -46,17 +51,14 @@ struct tiled_deferred_state
     
     vk_pipeline* GridFrustumPipeline;
     vk_pipeline* GBufferPipeline;
-    vk_pipeline* GBufferSnowPipeline;
     vk_pipeline* LightCullPipeline;
     vk_pipeline* LightingPipeline;
 
-    // NOTE: Water data
-    VkDescriptorSetLayout WaterDescLayout;
-    VkDescriptorSet WaterDescriptor;
-    vk_image PerlinNoise;
-    vk_image Distortion;
-    VkSampler NoiseSampler;
-    VkBuffer WaterInputsBuffer;
-    vk_pipeline* WaterPipeline;
+    // NOTE: Caustics data
+    VkBuffer CausticsInputBuffer;
+    VkSampler CausticsSampler;
+    vk_image CausticsImage;
+    VkDescriptorSetLayout CausticsDescLayout;
+    VkDescriptorSet CausticsDescriptor;
 };
 

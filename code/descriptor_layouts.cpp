@@ -13,15 +13,9 @@
 
 #include "shader_light_types.cpp"
 
-struct water_entry
-{
-    mat4 WVTransform;
-    mat4 WVPTransform;
-};
-
 struct instance_entry
 {
-    mat4 WVTransform;
+    mat4 WTransform;
     mat4 WVPTransform;
     vec4 Color;
     float SpecularPower;
@@ -55,15 +49,4 @@ struct instance_entry
     {                                                                   \
         directional_light DirectionalLight;                             \
     };                                                                  \
-                                                                        \
-    layout(set = set_number, binding = 5) buffer water_buffer           \
-    {                                                                   \
-        water_entry WaterBuffer[];                                      \
-    };                                                                  \
-                                                                        \
-    layout(set = set_number, binding = 6) uniform snow_buffer           \
-    {                                                                   \
-        vec3 SnowFallDir;                                               \
-    } SnowBuffer;                                                       \
-                                                                        \
     

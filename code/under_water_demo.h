@@ -41,7 +41,7 @@ struct scene_globals
 
 struct gpu_instance_entry
 {
-    m4 WVTransform;
+    m4 WTransform;
     m4 WVPTransform;
     v4 Color;
     float SpecularPower;
@@ -53,38 +53,7 @@ struct gpu_instance_entry
 struct instance_entry
 {
     u32 MeshId;
-    b32 IsSnow;
     gpu_instance_entry GpuData;
-};
-
-//
-// NOTE: Water Data
-//
-
-struct gpu_water_entry
-{
-    m4 WVTransform;
-    m4 WVPTransform;
-};
-
-struct water_entry
-{
-    u32 MeshId;
-    gpu_water_entry GpuData;
-};
-
-struct gpu_water_inputs
-{
-    float Time;
-};
-
-//
-// NOTE: Snow Data
-//
-
-struct gpu_snow_globals
-{
-    v3 SnowFallDir; // NOTE: In View Space
 };
 
 struct render_mesh
@@ -141,15 +110,6 @@ struct render_scene
     u32 NumOpaqueInstances;
     instance_entry* OpaqueInstances;
     VkBuffer OpaqueInstanceBuffer;
-
-    // NOTE: Snow Data
-    VkBuffer SnowGlobalBuffer;
-    
-    // NOTE: Water Instances
-    u32 MaxNumWaterInstances;
-    u32 NumWaterInstances;
-    water_entry* WaterInstances;
-    VkBuffer WaterInstanceBuffer;
 };
 
 struct demo_state
